@@ -14,20 +14,27 @@ public class Room
 
     private Room() { }
 
-    public Room(string name, int capacity, int floor, string? description = null)
+    public Room(
+        string name,
+        int capacity,
+        int floor,
+        int nameMaxLength,
+        string? description = null,
+        int? descriptionMaxLength = null)
     {
         Id = Guid.NewGuid();
-        SetName(name);
+        SetName(name, nameMaxLength);
         SetCapacity(capacity);
         SetFloor(floor);
-        Description = description;
+        if (description != null)
+            SetDescription(description, descriptionMaxLength ?? 0);
     }
 
-    public void SetName(string name)
+    public void SetName(string name, int maxLength)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        if (name.Length > Constants.DomainConstants.RoomNameMaxLength)
-            throw new ArgumentException($"Room name must not exceed {Constants.DomainConstants.RoomNameMaxLength} characters.");
+        if (name.Length > maxLength)
+            throw new ArgumentException($"Room name must not exceed {maxLength} characters.");
         Name = name;
     }
 
@@ -45,10 +52,10 @@ public class Room
         Floor = floor;
     }
 
-    public void SetDescription(string? description)
+    public void SetDescription(string? description, int maxLength)
     {
-        if (description != null && description.Length > Constants.DomainConstants.RoomDescriptionMaxLength)
-            throw new ArgumentException($"Description must not exceed {Constants.DomainConstants.RoomDescriptionMaxLength} characters.");
+        if (description != null && description.Length > maxLength)
+            throw new ArgumentException($"Description must not exceed {maxLength} characters.");
         Description = description;
     }
 

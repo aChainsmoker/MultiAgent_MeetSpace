@@ -18,37 +18,44 @@ public class User
 
     private User() { }
 
-    public User(string firstName, string lastName, string email, string passwordHash, UserRole role = UserRole.User)
+    public User(
+        string firstName,
+        string lastName,
+        string email,
+        string passwordHash,
+        int nameMaxLength,
+        int emailMaxLength,
+        UserRole role = UserRole.User)
     {
         Id = Guid.NewGuid();
-        SetFirstName(firstName);
-        SetLastName(lastName);
-        SetEmail(email);
+        SetFirstName(firstName, nameMaxLength);
+        SetLastName(lastName, nameMaxLength);
+        SetEmail(email, emailMaxLength);
         SetPasswordHash(passwordHash);
         Role = role;
     }
 
-    public void SetFirstName(string firstName)
+    public void SetFirstName(string firstName, int maxLength)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(firstName);
-        if (firstName.Length > Constants.DomainConstants.UserNameMaxLength)
-            throw new ArgumentException($"FirstName must not exceed {Constants.DomainConstants.UserNameMaxLength} characters.");
+        if (firstName.Length > maxLength)
+            throw new ArgumentException($"FirstName must not exceed {maxLength} characters.");
         FirstName = firstName;
     }
 
-    public void SetLastName(string lastName)
+    public void SetLastName(string lastName, int maxLength)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(lastName);
-        if (lastName.Length > Constants.DomainConstants.UserNameMaxLength)
-            throw new ArgumentException($"LastName must not exceed {Constants.DomainConstants.UserNameMaxLength} characters.");
+        if (lastName.Length > maxLength)
+            throw new ArgumentException($"LastName must not exceed {maxLength} characters.");
         LastName = lastName;
     }
 
-    public void SetEmail(string email)
+    public void SetEmail(string email, int maxLength)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(email);
-        if (email.Length > Constants.DomainConstants.EmailMaxLength)
-            throw new ArgumentException($"Email must not exceed {Constants.DomainConstants.EmailMaxLength} characters.");
+        if (email.Length > maxLength)
+            throw new ArgumentException($"Email must not exceed {maxLength} characters.");
         Email = email.ToLowerInvariant();
     }
 

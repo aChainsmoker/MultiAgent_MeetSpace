@@ -1,4 +1,8 @@
+using MeetSpace.Api.Extensions;
+
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddMeetSpaceOptions(builder.Configuration);
 
 var app = builder.Build();
 

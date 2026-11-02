@@ -2,5 +2,10 @@
   <Folder Name="/src/">
     <Project Path="src/MeetSpace.Api/MeetSpace.Api.csproj" />
     <Project Path="src/MeetSpace.Domain/MeetSpace.Domain.csproj" />
+    <Project Path="src/MeetSpace.Application/MeetSpace.Application.csproj" />
+    <Project Path="src/MeetSpace.Infrastructure/MeetSpace.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MeetSpace.Tests/MeetSpace.Tests.csproj" />
   </Folder>
 </Solution>

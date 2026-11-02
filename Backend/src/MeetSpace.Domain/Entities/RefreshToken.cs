@@ -12,13 +12,13 @@ public class RefreshToken
 
     private RefreshToken() { }
 
-    public RefreshToken(string token, Guid userId)
+    public RefreshToken(string token, Guid userId, int lifetimeDays)
     {
         Id = Guid.NewGuid();
         ArgumentException.ThrowIfNullOrWhiteSpace(token);
         Token = token;
         UserId = userId;
         CreatedAt = DateTime.UtcNow;
-        ExpiresAt = CreatedAt.AddDays(Constants.DomainConstants.RefreshTokenLifetimeDays);
+        ExpiresAt = CreatedAt.AddDays(lifetimeDays);
     }
 }
