@@ -24,6 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\MeetSpace.Api\MeetSpace.Api.csproj" />
     <ProjectReference Include="..\..\src\MeetSpace.Domain\MeetSpace.Domain.csproj" />
     <ProjectReference Include="..\..\src\MeetSpace.Application\MeetSpace.Application.csproj" />
     <ProjectReference Include="..\..\src\MeetSpace.Infrastructure\MeetSpace.Infrastructure.csproj" />
