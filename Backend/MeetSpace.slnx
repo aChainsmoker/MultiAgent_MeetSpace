@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/MeetSpace.Api/MeetSpace.Api.csproj" />
+    <Project Path="src/MeetSpace.Domain/MeetSpace.Domain.csproj" />
   </Folder>
 </Solution>
