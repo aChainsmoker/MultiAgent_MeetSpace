@@ -9,17 +9,17 @@ public class Equipment
 
     private Equipment() { }
 
-    public Equipment(string name)
+    public Equipment(string name, int nameMaxLength)
     {
         Id = Guid.NewGuid();
-        SetName(name);
+        SetName(name, nameMaxLength);
     }
 
-    public void SetName(string name)
+    public void SetName(string name, int maxLength)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        if (name.Length > Constants.DomainConstants.EquipmentNameMaxLength)
-            throw new ArgumentException($"Equipment name must not exceed {Constants.DomainConstants.EquipmentNameMaxLength} characters.");
+        if (name.Length > maxLength)
+            throw new ArgumentException($"Equipment name must not exceed {maxLength} characters.");
         Name = name;
     }
 }

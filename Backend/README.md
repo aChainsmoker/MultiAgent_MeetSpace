@@ -14,9 +14,12 @@ Backend системы бронирования переговорных ком�
 
 ```
 Backend/
-├── MeetSpace.sln
+├── MeetSpace.slnx
 └── src/
-    └── MeetSpace.Api/        # точка входа Web API (GET /health)
+    ├── MeetSpace.Api/              # точка входа Web API
+    ├── MeetSpace.Domain/           # сущности, перечисления, правила
+    ├── MeetSpace.Application/      # бизнес-логика, абстракции
+    └── MeetSpace.Infrastructure/   # внешние сервисы (JWT, S3, BCrypt)
 ```
 
 ## Требования
@@ -68,3 +71,39 @@ curl http://localhost:5231/health
 - Локальные секреты и пользовательские настройки хранятся в
   `appsettings.Development.json`, который не попадает в Git
   (см. `Backend/.gitignore`).
+
+## Конфигурация
+
+Настройки приложения хранятся в `appsettings.json` в типизированных секциях.
+Изменения применяются **после перезапуска** приложения (hot reload не требуется).
+Невалидная конфигурация приводит к ошибке запуска с понятным сообщением.
+
+Значения можно переопределить через переменные окружения с двойным подчёркиванием
+(стандартный провайдер .NET), например:
+
+```bash
+Booking__BookingTimeStepMinutes=30
+Jwt__AccessTokenLifetimeMinutes=30
+S3__BucketName=custom-bucket
+```
+
+### Секции конфигурации
+
+| Секция | Класс Options | Единицы измерения |
+| --- | --- | --- |
+| `Booking` | `BookingOptions` | `WorkingHoursStart`, `WorkingHoursEnd` — `TimeSpan` (`hh:mm:ss`); `BookingTimeStepMinutes` — целые минуты |
+| `Jwt` | `JwtOptions` | `AccessTokenLifetimeMinutes` — целые минуты; `RefreshTokenLifetimeDays` — целые дни |
+| `PasswordHashing` | `PasswordHashingOptions` | `BcryptWorkFactor` — целое число (логарифмический фактор BCrypt, допустимый диапазон 4–31) |
+| `S3` | `S3Options` | `BucketName` — строка; `PresignedUrlLifetimeMinutes` — целые минуты |
+| `Validation` | `ValidationOptions` | Все поля `*MaxLength` — целые числа (количество символов) |
+
+### Ограничения изменения MaxLength
+
+Значения `MaxLength` в секции `Validation` управляют **программной валидацией**
+(входные DTO и сеттеры сущностей Domain). Они **не меняют** схему БД автоматически.
+Ограничения столбцов БД (`varchar(N)`) задаются независимо в EF-конфигурациях
+и синхронизированы со значениями по умолчанию в `appsettings.json`.
+
+Если администратор увеличит лимит в `appsettings.json`, входная валидация пропустит
+более длинные строки, но БД может отвергнуть запись (исключение PostgreSQL о
+превышении длины). Для согласованного изменения лимитов требуется ручная миграция БД.

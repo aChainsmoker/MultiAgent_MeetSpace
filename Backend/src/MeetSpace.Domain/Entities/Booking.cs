@@ -1,3 +1,5 @@
+using MeetSpace.Domain.Rules;
+
 namespace MeetSpace.Domain.Entities;
 
 public class Booking
@@ -16,28 +18,40 @@ public class Booking
 
     private Booking() { }
 
-    public Booking(string title, Guid userId, Guid roomId, DateTime date, TimeSpan startTime, TimeSpan endTime)
+    public Booking(
+        string title,
+        Guid userId,
+        Guid roomId,
+        DateTime date,
+        TimeSpan startTime,
+        TimeSpan endTime,
+        BookingTimeRules rules,
+        int titleMaxLength,
+        string? description = null,
+        int? descriptionMaxLength = null)
     {
         Id = Guid.NewGuid();
-        SetTitle(title);
+        SetTitle(title, titleMaxLength);
         UserId = userId;
         RoomId = roomId;
         SetDate(date);
-        SetTimeInterval(startTime, endTime);
+        SetTimeInterval(startTime, endTime, rules);
+        if (description != null)
+            SetDescription(description, descriptionMaxLength ?? 0);
     }
 
-    public void SetTitle(string title)
+    public void SetTitle(string title, int maxLength)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
-        if (title.Length > Constants.DomainConstants.BookingTitleMaxLength)
-            throw new ArgumentException($"Title must not exceed {Constants.DomainConstants.BookingTitleMaxLength} characters.");
+        if (title.Length > maxLength)
+            throw new ArgumentException($"Title must not exceed {maxLength} characters.");
         Title = title;
     }
 
-    public void SetDescription(string? description)
+    public void SetDescription(string? description, int maxLength)
     {
-        if (description != null && description.Length > Constants.DomainConstants.BookingDescriptionMaxLength)
-            throw new ArgumentException($"Description must not exceed {Constants.DomainConstants.BookingDescriptionMaxLength} characters.");
+        if (description != null && description.Length > maxLength)
+            throw new ArgumentException($"Description must not exceed {maxLength} characters.");
         Description = description;
     }
 
@@ -48,22 +62,22 @@ public class Booking
         Date = date.Date;
     }
 
-    public void SetTimeInterval(TimeSpan startTime, TimeSpan endTime)
+    public void SetTimeInterval(TimeSpan startTime, TimeSpan endTime, BookingTimeRules rules)
     {
         if (endTime <= startTime)
             throw new ArgumentException("End time must be later than start time.");
 
-        if (startTime < Constants.DomainConstants.WorkingHoursStart)
-            throw new ArgumentException($"Start time must not be earlier than {Constants.DomainConstants.WorkingHoursStart:hh\\:mm}.");
+        if (startTime < rules.WorkingHoursStart)
+            throw new ArgumentException($"Start time must not be earlier than {rules.WorkingHoursStart:hh\\:mm}.");
 
-        if (endTime > Constants.DomainConstants.WorkingHoursEnd)
-            throw new ArgumentException($"End time must not be later than {Constants.DomainConstants.WorkingHoursEnd:hh\\:mm}.");
+        if (endTime > rules.WorkingHoursEnd)
+            throw new ArgumentException($"End time must not be later than {rules.WorkingHoursEnd:hh\\:mm}.");
 
-        if (startTime.Minutes % Constants.DomainConstants.BookingTimeStepMinutes != 0)
-            throw new ArgumentException($"Start time minutes must be a multiple of {Constants.DomainConstants.BookingTimeStepMinutes}.");
+        if (startTime.Minutes % rules.TimeStepMinutes != 0)
+            throw new ArgumentException($"Start time minutes must be a multiple of {rules.TimeStepMinutes}.");
 
-        if (endTime.Minutes % Constants.DomainConstants.BookingTimeStepMinutes != 0)
-            throw new ArgumentException($"End time minutes must be a multiple of {Constants.DomainConstants.BookingTimeStepMinutes}.");
+        if (endTime.Minutes % rules.TimeStepMinutes != 0)
+            throw new ArgumentException($"End time minutes must be a multiple of {rules.TimeStepMinutes}.");
 
         StartTime = startTime;
         EndTime = endTime;
