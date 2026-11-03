@@ -6,9 +6,10 @@ Backend системы бронирования переговорных ком�
 
 - .NET 10
 - ASP.NET Core Web API
+- EF Core + Npgsql (PostgreSQL)
 
-> Стек будет расширяться в последующих тикетах (EF Core/Npgsql,
-> JWT, S3/MinIO, AutoMapper, Swagger и др.).
+> Стек будет расширяться в последующих тикетах (JWT, S3/MinIO,
+> AutoMapper, Swagger и др.).
 
 ## Структура
 
@@ -19,7 +20,8 @@ Backend/
     ├── MeetSpace.Api/              # точка входа Web API
     ├── MeetSpace.Domain/           # сущности, перечисления, правила
     ├── MeetSpace.Application/      # бизнес-логика, абстракции
-    └── MeetSpace.Infrastructure/   # внешние сервисы (JWT, S3, BCrypt)
+    ├── MeetSpace.Infrastructure/   # внешние сервисы (JWT, S3, BCrypt)
+    └── MeetSpace.DataAccess/       # доступ к данным (EF Core + PostgreSQL)
 ```
 
 ## Требования
@@ -96,6 +98,37 @@ S3__BucketName=custom-bucket
 | `PasswordHashing` | `PasswordHashingOptions` | `BcryptWorkFactor` — целое число (логарифмический фактор BCrypt, допустимый диапазон 4–31) |
 | `S3` | `S3Options` | `BucketName` — строка; `PresignedUrlLifetimeMinutes` — целые минуты |
 | `Validation` | `ValidationOptions` | Все поля `*MaxLength` — целые числа (количество символов) |
+
+## База данных (PostgreSQL)
+
+### Запуск PostgreSQL в Docker
+
+Из корня репозитория:
+
+```bash
+cp .env.example .env        # Скопировать и при необходимости изменить пароль
+docker compose up -d         # Запустить PostgreSQL в фоне
+docker compose ps            # Проверить, что контейнер запущен (healthy)
+```
+
+### Строка подключения
+
+- **С хоста** (для приложения): `Host=localhost;Port=5432;Database=meetspace;Username=meetspace;Password=meetspace`
+- **Из контейнерной сети** (для других контейнеров): `Host=postgres;Port=5432;Database=meetspace;Username=meetspace;Password=meetspace`
+
+### Применение миграций
+
+```bash
+cd Backend/src/MeetSpace.Api
+dotnet ef database update
+```
+
+### Остановка и очистка
+
+```bash
+docker compose down          # Остановить контейнеры
+docker compose down -v       # Остановить и удалить данные (тома)
+```
 
 ### Ограничения изменения MaxLength
 

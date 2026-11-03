@@ -1,0 +1,32 @@
+# docker-compose.yml — PostgreSQL для локальной разработки MeetSpace
+# Размещается в корне репозитория
+
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: meetspace-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-meetspace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meetspace}
+      POSTGRES_DB: ${POSTGRES_DB:-meetspace}
+
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-meetspace} -d ${POSTGRES_DB:-meetspace}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgres_data:
+    name: meetspace_postgres_data

@@ -9,6 +9,14 @@
   <ItemGroup>
     <ProjectReference Include="..\MeetSpace.Application\MeetSpace.Application.csproj" />
     <ProjectReference Include="..\MeetSpace.Infrastructure\MeetSpace.Infrastructure.csproj" />
+    <ProjectReference Include="..\MeetSpace.DataAccess\MeetSpace.DataAccess.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
 </Project>
