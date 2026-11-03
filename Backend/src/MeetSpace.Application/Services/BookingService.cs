@@ -84,6 +84,7 @@ public class BookingService
         BookingRequestDto request,
         CancellationToken ct = default)
     {
+        // Step 1: auth + load + permissions
         var userResult = await GetRequiredUserIdAndRoleAsync(ct);
         var userId = userResult.UserId;
         var role = userResult.Role;
@@ -94,33 +95,50 @@ public class BookingService
 
         EnsureCanModify(existing, userId, role);
 
+        // Step 2: validate without mutating existing entity
         var normalizedDate = NormalizeDate(request.Date);
         ValidateNotInPast(normalizedDate, request.StartTime);
 
-        // Apply changes to existing entity
-        existing.SetTitle(request.Title, _stringLengthRules.BookingTitleMaxLength);
-        existing.SetDescription(request.Description, _stringLengthRules.BookingDescriptionMaxLength);
-        existing.SetDate(normalizedDate);
-        existing.SetTimeInterval(request.StartTime, request.EndTime, _timeRules);
-
+        // Validate room exists if changing
         if (request.RoomId != existing.RoomId)
         {
             if (!await _roomRepository.ExistsAsync(request.RoomId, ct))
                 throw new NotFoundException("Room", request.RoomId);
+        }
+        var effectiveRoomId = request.RoomId != existing.RoomId ? request.RoomId : existing.RoomId;
 
-            // RoomId is private set; we need to update it via reflection or add a method.
-            // Since Domain entity has private set, we only support updating room if the domain
-            // entity allows it. The current Booking entity does NOT have a SetRoomId method.
-            // Per architecture doc: "Не изменять Domain". We verify the room exists but
-            // cannot actually change RoomId via public API of Booking entity.
-            // This is an intentional limitation — room changes require a separate ticket.
-            //
-            // OTOH, if roomId didn't change, we need no special handling besides the
-            // overlapping check below which uses the existing.RoomId.
+        // Validate time interval using shared rules (FIX-05)
+        try
+        {
+            _timeRules.Validate(request.StartTime, request.EndTime);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new ValidationException(ex.Message, ex);
         }
 
-        var effectiveRoomId = existing.RoomId;
+        // Validate title/description using a dry-run (temporary Booking for validation only)
+        try
+        {
+            // Use a throwaway Booking constructor to validate all fields atomically
+            var _ = new Booking(
+                title: request.Title,
+                userId: existing.UserId,
+                roomId: effectiveRoomId,
+                date: normalizedDate,
+                startTime: request.StartTime,
+                endTime: request.EndTime,
+                rules: _timeRules,
+                titleMaxLength: _stringLengthRules.BookingTitleMaxLength,
+                description: request.Description,
+                descriptionMaxLength: _stringLengthRules.BookingDescriptionMaxLength);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new ValidationException(ex.Message, ex);
+        }
 
+        // Step 3: check overlaps (still no mutations)
         var overlapping = await _bookingRepository.FindOverlappingAsync(
             effectiveRoomId, normalizedDate, request.StartTime, request.EndTime,
             excludeBookingId: bookingId, ct);
@@ -128,6 +146,22 @@ public class BookingService
         if (overlapping.Count > 0)
             throw CreateConflictException(effectiveRoomId, normalizedDate, request.StartTime, request.EndTime);
 
+        // Step 4: all checks passed — mutate existing entity (FIX-01, FIX-02, FIX-03)
+        try
+        {
+            existing.SetTitle(request.Title, _stringLengthRules.BookingTitleMaxLength);
+            existing.SetDescription(request.Description, _stringLengthRules.BookingDescriptionMaxLength);
+            existing.SetDate(normalizedDate);
+            existing.SetTimeInterval(request.StartTime, request.EndTime, _timeRules);
+            if (effectiveRoomId != existing.RoomId)
+                existing.SetRoomId(effectiveRoomId);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new ValidationException(ex.Message, ex);
+        }
+
+        // Step 5: save
         await _bookingRepository.UpdateAsync(existing, ct);
 
         return MapToBookingDto(existing);
@@ -165,6 +199,10 @@ public class BookingService
         DateOnly endDate,
         CancellationToken ct = default)
     {
+        // FIX-06: validate date range
+        if (startDate > endDate)
+            throw new ValidationException("Start date must not be later than end date.");
+
         var userId = await GetRequiredUserIdAsync(ct);
         var role = await GetRequiredUserRoleAsync(ct);
 
@@ -186,10 +224,10 @@ public class BookingService
         var normalizedDate = NormalizeDate(date);
         ValidateNotInPast(normalizedDate, startTime);
 
-        // Validate time interval through BookingTimeRules
+        // FIX-05: use shared BookingTimeRules.Validate instead of duplicate ValidateTimeInterval
         try
         {
-            ValidateTimeInterval(startTime, endTime);
+            _timeRules.Validate(startTime, endTime);
         }
         catch (ArgumentException ex)
         {
@@ -268,25 +306,6 @@ public class BookingService
             throw new ValidationException("Cannot book in the past.");
     }
 
-    private void ValidateTimeInterval(TimeSpan startTime, TimeSpan endTime)
-    {
-        // Reuse the same validation as Booking.SetTimeInterval without needing a Booking instance.
-        if (endTime <= startTime)
-            throw new ArgumentException("End time must be later than start time.");
-
-        if (startTime < _timeRules.WorkingHoursStart)
-            throw new ArgumentException($"Start time must not be earlier than {_timeRules.WorkingHoursStart:hh\\:mm}.");
-
-        if (endTime > _timeRules.WorkingHoursEnd)
-            throw new ArgumentException($"End time must not be later than {_timeRules.WorkingHoursEnd:hh\\:mm}.");
-
-        if (startTime.Minutes % _timeRules.TimeStepMinutes != 0)
-            throw new ArgumentException($"Start time minutes must be a multiple of {_timeRules.TimeStepMinutes}.");
-
-        if (endTime.Minutes % _timeRules.TimeStepMinutes != 0)
-            throw new ArgumentException($"End time minutes must be a multiple of {_timeRules.TimeStepMinutes}.");
-    }
-
     private Booking BuildBooking(BookingRequestDto request, Guid userId, DateTime normalizedDate)
     {
         try
@@ -337,7 +356,9 @@ public class BookingService
 
     private static CalendarBookingDto MapToCalendarBookingDto(Booking booking, Guid currentUserId, UserRole currentRole)
     {
-        var isOwn = booking.UserId == currentUserId || currentRole == UserRole.Manager;
+        // FIX-04: separate ownership from visibility
+        var isOwn = booking.UserId == currentUserId;
+        var canSeeDetails = isOwn || currentRole == UserRole.Manager;
 
         return new CalendarBookingDto
         {
@@ -347,10 +368,10 @@ public class BookingService
             Date = booking.Date,
             StartTime = booking.StartTime,
             EndTime = booking.EndTime,
-            Title = isOwn ? booking.Title : null,
-            Description = isOwn ? booking.Description : null,
-            UserFirstName = isOwn ? booking.User?.FirstName : null,
-            UserLastName = isOwn ? booking.User?.LastName : null,
+            Title = canSeeDetails ? booking.Title : null,
+            Description = canSeeDetails ? booking.Description : null,
+            UserFirstName = canSeeDetails ? booking.User?.FirstName : null,
+            UserLastName = canSeeDetails ? booking.User?.LastName : null,
             IsOwn = isOwn
         };
     }

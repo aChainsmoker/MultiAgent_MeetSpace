@@ -64,22 +64,13 @@ public class Booking
 
     public void SetTimeInterval(TimeSpan startTime, TimeSpan endTime, BookingTimeRules rules)
     {
-        if (endTime <= startTime)
-            throw new ArgumentException("End time must be later than start time.");
-
-        if (startTime < rules.WorkingHoursStart)
-            throw new ArgumentException($"Start time must not be earlier than {rules.WorkingHoursStart:hh\\:mm}.");
-
-        if (endTime > rules.WorkingHoursEnd)
-            throw new ArgumentException($"End time must not be later than {rules.WorkingHoursEnd:hh\\:mm}.");
-
-        if (startTime.Minutes % rules.TimeStepMinutes != 0)
-            throw new ArgumentException($"Start time minutes must be a multiple of {rules.TimeStepMinutes}.");
-
-        if (endTime.Minutes % rules.TimeStepMinutes != 0)
-            throw new ArgumentException($"End time minutes must be a multiple of {rules.TimeStepMinutes}.");
-
+        rules.Validate(startTime, endTime);
         StartTime = startTime;
         EndTime = endTime;
+    }
+
+    public void SetRoomId(Guid roomId)
+    {
+        RoomId = roomId;
     }
 }

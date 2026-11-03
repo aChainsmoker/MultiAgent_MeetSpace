@@ -1088,7 +1088,7 @@ public class BookingServiceTests
 
         // Assert
         var dto = Assert.Single(result);
-        Assert.True(dto.IsOwn); // Manager sees everything as own
+        Assert.False(dto.IsOwn); // FIX-04: Manager does not own other booking, but sees details
         Assert.Equal("Board Meeting", dto.Title);
         Assert.Equal("Q4 planning", dto.Description);
         Assert.Equal("Alice", dto.UserFirstName);
@@ -1261,5 +1261,769 @@ public class BookingServiceTests
 
         // Assert
         Assert.Equal(DateTimeKind.Unspecified, result.Date.Kind);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // REGRESSION: FIX-02 — Update error contract (ValidationException)
+    // ═══════════════════════════════════════════════════════════════════
+    // These tests SHOULD FAIL on current code:
+    //   UpdateBookingAsync:101-104 calls SetTitle/SetDescription/SetTimeInterval
+    //   without try/catch, so Domain ArgumentException leaks un-wrapped.
+    // Expected: ValidationException. Actual (current): ArgumentException.
+
+    [Fact]
+    public async Task UpdateBooking_EmptyTitle_ThrowsValidationException()
+    {
+        // Arrange
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        var request = CreateValidRequest(title: "");
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        // Act & Assert — should be ValidationException, currently throws ArgumentException
+        await Assert.ThrowsAsync<ValidationException>(() => svc.UpdateBookingAsync(BookingId, request));
+    }
+
+    [Fact]
+    public async Task UpdateBooking_EndTimeBeforeStartTime_ThrowsValidationException()
+    {
+        // Arrange
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        var request = CreateValidRequest(start: TimeSpan.FromHours(12), end: TimeSpan.FromHours(10));
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        // Act & Assert — should be ValidationException, currently throws ArgumentException
+        await Assert.ThrowsAsync<ValidationException>(() => svc.UpdateBookingAsync(BookingId, request));
+    }
+
+    [Fact]
+    public async Task UpdateBooking_OutsideWorkingHours_ThrowsValidationException()
+    {
+        // Arrange
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        // Start before 09:00
+        var request = CreateValidRequest(start: TimeSpan.FromHours(8), end: TimeSpan.FromHours(10));
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ValidationException>(() => svc.UpdateBookingAsync(BookingId, request));
+    }
+
+    [Fact]
+    public async Task UpdateBooking_InvalidTimeStep_ThrowsValidationException()
+    {
+        // Arrange
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        // Step=15, 10:07 is invalid
+        var request = CreateValidRequest(
+            start: TimeSpan.FromHours(10).Add(TimeSpan.FromMinutes(7)),
+            end: TimeSpan.FromHours(11));
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ValidationException>(() => svc.UpdateBookingAsync(BookingId, request));
+    }
+
+    [Fact]
+    public async Task UpdateBooking_TitleTooLong_ThrowsValidationException()
+    {
+        // Arrange
+        var (svc, _, bookingRepo, userCtx, _) = CreateService(
+            validationOpts: new ValidationOptions
+            {
+                UserNameMaxLength = 100,
+                EmailMaxLength = 200,
+                EquipmentNameMaxLength = 100,
+                RoomNameMaxLength = 100,
+                RoomDescriptionMaxLength = 500,
+                BookingTitleMaxLength = 5,
+                BookingDescriptionMaxLength = 2000
+            });
+        var request = CreateValidRequest(title: "TooLongTitle");
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId, titleMaxLength: 200);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ValidationException>(() => svc.UpdateBookingAsync(BookingId, request));
+    }
+
+    [Fact]
+    public async Task UpdateBooking_DescriptionTooLong_ThrowsValidationException()
+    {
+        // Arrange
+        var (svc, _, bookingRepo, userCtx, _) = CreateService(
+            validationOpts: new ValidationOptions
+            {
+                UserNameMaxLength = 100,
+                EmailMaxLength = 200,
+                EquipmentNameMaxLength = 100,
+                RoomNameMaxLength = 100,
+                RoomDescriptionMaxLength = 500,
+                BookingTitleMaxLength = 200,
+                BookingDescriptionMaxLength = 5
+            });
+        var request = CreateValidRequest(description: "Too long");
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ValidationException>(() => svc.UpdateBookingAsync(BookingId, request));
+    }
+
+    [Fact]
+    public async Task UpdateBooking_PastDate_ThrowsValidationException()
+    {
+        // Arrange
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        var request = CreateValidRequest(date: PastDate);
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => svc.UpdateBookingAsync(BookingId, request));
+        Assert.Contains("past", ex.Message.ToLower());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // REGRESSION: FIX-03 — entity immutability on Update failure
+    // ═══════════════════════════════════════════════════════════════════
+    // These tests SHOULD FAIL on current code:
+    //   UpdateBookingAsync:101-104 mutates existing BEFORE overlap check (124-129).
+    //   When conflict occurs, entity is already partially mutated.
+    //   Tests verify that after BookingConflictException, entity fields are unchanged.
+
+    [Fact]
+    public async Task UpdateBooking_ConflictError_DoesNotMutateEntity()
+    {
+        // Arrange
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        var originalTitle = "Original Title";
+        var originalDate = FutureDate;
+        var originalStart = TimeSpan.FromHours(10);
+        var originalEnd = TimeSpan.FromHours(11);
+        var originalRoom = RoomId;
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(
+            bookingId: BookingId, userId: UserId,
+            title: originalTitle, date: originalDate,
+            start: originalStart, end: originalEnd,
+            roomId: originalRoom);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        // Request with different time that will conflict
+        var request = CreateValidRequest(
+            start: TimeSpan.FromHours(14), end: TimeSpan.FromHours(15),
+            title: "New Title");
+
+        var otherBooking = CreateBookingEntity(
+            bookingId: Guid.NewGuid(), userId: OtherUserId,
+            start: TimeSpan.FromHours(14), end: TimeSpan.FromHours(15));
+        bookingRepo.Setup(r => r.FindOverlappingAsync(RoomId, FutureDate,
+                TimeSpan.FromHours(14), TimeSpan.FromHours(15), BookingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Booking> { otherBooking });
+
+        // Act
+        await Assert.ThrowsAsync<BookingConflictException>(
+            () => svc.UpdateBookingAsync(BookingId, request));
+
+        // Assert — entity MUST NOT be mutated after conflict
+        Assert.Equal(originalTitle, existing.Title);
+        Assert.Equal(originalDate, existing.Date);
+        Assert.Equal(originalStart, existing.StartTime);
+        Assert.Equal(originalEnd, existing.EndTime);
+        Assert.Equal(originalRoom, existing.RoomId);
+    }
+
+    [Fact]
+    public async Task UpdateBooking_ConflictError_DoesNotCallUpdateAsync()
+    {
+        // Arrange
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        var request = CreateValidRequest(start: TimeSpan.FromHours(14), end: TimeSpan.FromHours(15));
+
+        var otherBooking = CreateBookingEntity(
+            bookingId: Guid.NewGuid(), userId: OtherUserId,
+            start: TimeSpan.FromHours(14), end: TimeSpan.FromHours(15));
+        bookingRepo.Setup(r => r.FindOverlappingAsync(RoomId, FutureDate,
+                TimeSpan.FromHours(14), TimeSpan.FromHours(15), BookingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Booking> { otherBooking });
+
+        // Act
+        await Assert.ThrowsAsync<BookingConflictException>(
+            () => svc.UpdateBookingAsync(BookingId, request));
+
+        // Assert
+        bookingRepo.Verify(r => r.UpdateAsync(It.IsAny<Booking>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateBooking_RoomNotFound_DoesNotMutateEntity()
+    {
+        // Arrange — Note: this test can only be fully verified after FIX-01 (SetRoomId).
+        // Before SetRoomId, roomId is not mutated, so entity state is preserved anyway.
+        // After SetRoomId, the entity should not be mutated when the new room doesn't exist.
+        // For now, this test verifies that NotFoundException is thrown with correct data.
+        var (svc, roomRepo, bookingRepo, userCtx, _) = CreateService();
+        var originalTitle = "Original";
+        var nonExistentRoomId = Guid.Parse("99999999-9999-9999-9999-999999999999");
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId, title: originalTitle);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+        roomRepo.Setup(r => r.ExistsAsync(nonExistentRoomId, It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        var request = CreateValidRequest(roomId: nonExistentRoomId, title: "New Title");
+
+        // Act
+        var ex = await Assert.ThrowsAsync<NotFoundException>(
+            () => svc.UpdateBookingAsync(BookingId, request));
+
+        Assert.Equal("Room", ex.EntityName);
+        Assert.Equal(nonExistentRoomId, ex.EntityId);
+
+        // Entity should not be mutated
+        Assert.Equal(originalTitle, existing.Title);
+        Assert.Equal(RoomId, existing.RoomId);
+    }
+
+    [Fact]
+    public async Task UpdateBooking_LateFieldError_DoesNotLeavePartialMutation()
+    {
+        // Arrange: SetTitle succeeds but SetTimeInterval fails (EndTime before StartTime).
+        // After fix, NO mutation should occur because validation happens before mutation.
+        // Before fix, title IS mutated because SetTitle runs before SetTimeInterval.
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        var originalTitle = "Original Title";
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId, title: originalTitle);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        // Valid title, invalid time (end before start)
+        var request = CreateValidRequest(
+            title: "New Title",
+            start: TimeSpan.FromHours(12),
+            end: TimeSpan.FromHours(10));
+
+        // Act
+        await Assert.ThrowsAsync<ValidationException>(
+            () => svc.UpdateBookingAsync(BookingId, request));
+
+        // Assert — title MUST NOT have changed (partial mutation)
+        // NOTE: This assertion MAY FAIL on current code because SetTitle executes
+        // before SetTimeInterval throws. If title IS "New Title", that's the bug.
+        Assert.Equal(originalTitle, existing.Title);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // REGRESSION: FIX-01 — Change room on Update
+    // ═══════════════════════════════════════════════════════════════════
+    // FIX-01 applied: SetRoomId added to Domain, tests enabled.
+    [Fact]
+    public async Task UpdateBooking_ChangeRoom_UpdatesRoomId()
+    {
+        var (svc, roomRepo, bookingRepo, userCtx, _) = CreateService();
+        var newRoomId = OtherRoomId;
+        var request = CreateValidRequest(roomId: newRoomId, title: "Moved");
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+        roomRepo.Setup(r => r.ExistsAsync(newRoomId, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+        bookingRepo.Setup(r => r.FindOverlappingAsync(newRoomId, FutureDate, StartTime, EndTime, BookingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Booking>());
+
+        var result = await svc.UpdateBookingAsync(BookingId, request);
+
+        Assert.Equal(newRoomId, result.RoomId);
+        bookingRepo.Verify(r => r.UpdateAsync(existing, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateBooking_ChangeRoom_ChecksOverlapInNewRoom()
+    {
+        var (svc, roomRepo, bookingRepo, userCtx, _) = CreateService();
+        var newRoomId = OtherRoomId;
+        var request = CreateValidRequest(roomId: newRoomId);
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+        roomRepo.Setup(r => r.ExistsAsync(newRoomId, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        // Setup conflict in the NEW room
+        var otherBooking = CreateBookingEntity(bookingId: Guid.NewGuid(), userId: OtherUserId, roomId: newRoomId);
+        bookingRepo.Setup(r => r.FindOverlappingAsync(newRoomId, FutureDate, StartTime, EndTime, BookingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Booking> { otherBooking });
+
+        await Assert.ThrowsAsync<BookingConflictException>(
+            () => svc.UpdateBookingAsync(BookingId, request));
+    }
+
+    [Fact]
+    public async Task UpdateBooking_ChangeRoom_NewRoomNotFound_ThrowsNotFoundException()
+    {
+        var (svc, roomRepo, bookingRepo, userCtx, _) = CreateService();
+        var nonExistentRoomId = Guid.Parse("99999999-9999-9999-9999-999999999999");
+        var request = CreateValidRequest(roomId: nonExistentRoomId);
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+        roomRepo.Setup(r => r.ExistsAsync(nonExistentRoomId, It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        var ex = await Assert.ThrowsAsync<NotFoundException>(
+            () => svc.UpdateBookingAsync(BookingId, request));
+        Assert.Equal("Room", ex.EntityName);
+        Assert.Equal(nonExistentRoomId, ex.EntityId);
+    }
+
+    [Fact]
+    public async Task UpdateBooking_SameRoom_NoChange()
+    {
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        var request = CreateValidRequest(roomId: RoomId, title: "Same Room");
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId, roomId: RoomId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+        bookingRepo.Setup(r => r.FindOverlappingAsync(RoomId, FutureDate, StartTime, EndTime, BookingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Booking>());
+
+        var result = await svc.UpdateBookingAsync(BookingId, request);
+
+        Assert.Equal(RoomId, result.RoomId);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // REGRESSION: FIX-04 — IsOwn for Manager
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task GetCalendarBookings_ManagerOwnBooking_IsOwnTrue()
+    {
+        // Arrange: Manager has their OWN booking — IsOwn should be true
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.Manager);
+
+        var managerUser = CreateUser(id: UserId, firstName: "Manager", lastName: "Self");
+        var ownBooking = CreateBookingEntity(userId: UserId, user: managerUser,
+            title: "My Own Meeting");
+
+        bookingRepo.Setup(r => r.GetByDateRangeAsync(It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Booking> { ownBooking });
+
+        // Act
+        var result = await svc.GetCalendarBookingsAsync(
+            DateOnly.FromDateTime(FutureDate), DateOnly.FromDateTime(FutureDate));
+
+        // Assert
+        var dto = Assert.Single(result);
+        Assert.True(dto.IsOwn); // Manager's OWN booking
+        Assert.Equal("My Own Meeting", dto.Title);
+    }
+
+    [Fact]
+    public async Task GetCalendarBookings_ManagerOtherBooking_IsOwnFalseButHasDetails()
+    {
+        // Arrange: Manager views someone else's booking
+        // IsOwn should be FALSE (not owner), but details should be visible
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.Manager);
+
+        var otherUser = CreateUser(id: OtherUserId, firstName: "Alice", lastName: "Wonder");
+        var otherBooking = CreateBookingEntity(userId: OtherUserId, user: otherUser,
+            title: "Alice Meeting", description: "Alice details");
+
+        bookingRepo.Setup(r => r.GetByDateRangeAsync(It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Booking> { otherBooking });
+
+        // Act
+        var result = await svc.GetCalendarBookingsAsync(
+            DateOnly.FromDateTime(FutureDate), DateOnly.FromDateTime(FutureDate));
+
+        // Assert
+        var dto = Assert.Single(result);
+        // FIX: Current code sets IsOwn=true for Manager even for other's bookings.
+        // After fix, IsOwn should be FALSE for other's bookings.
+        Assert.False(dto.IsOwn, "Manager should have IsOwn=false for other people's bookings");
+        // But details are still visible for Manager
+        Assert.Equal("Alice Meeting", dto.Title);
+        Assert.Equal("Alice details", dto.Description);
+        Assert.Equal("Alice", dto.UserFirstName);
+        Assert.Equal("Wonder", dto.UserLastName);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // REGRESSION: FIX-05 — TotalMinutes for step validation, single source
+    // ═══════════════════════════════════════════════════════════════════
+    // Current code uses .Minutes % TimeStepMinutes (component 0-59).
+    // For TimeStepMinutes=45: time 1:30 has .Minutes=30, 30%45=30≠0 — rejected.
+    // With TotalMinutes: 90%45=0 — accepted.
+    // These tests SHOULD FAIL on current code if step=45 is used with
+    // times where Minutes component is not a multiple of 45.
+
+    [Fact]
+    public async Task CreateBooking_Step45_AcceptsTimeWithNonZeroMinutes()
+    {
+        // Arrange: TimeStep=45, time 10:45-11:30 (both have Minutes=45,30)
+        // 9:45 = 585 mins, (585-540)%45=0 ✓. But .Minutes=45, 45%45=0 ✓
+        // 10:30 = 630 mins, (630-540)%45=0 ✓. But .Minutes=30, 30%45=30 ≠ 0 ✗
+        // Current code rejects 11:30 because EndTime.Minutes (30) % 45 ≠ 0.
+        // After fix (TotalMinutes): 690 % 45 = 0 → accepted.
+        var customOpts = new BookingOptions
+        {
+            WorkingHoursStart = TimeSpan.FromHours(9),
+            WorkingHoursEnd = TimeSpan.FromHours(18),
+            BookingTimeStepMinutes = 45
+        };
+
+        var (svc, roomRepo, bookingRepo, userCtx, _) = CreateService(bookingOpts: customOpts);
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        roomRepo.Setup(r => r.ExistsAsync(RoomId, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        // 9:45 = StartTime, 10:30 = EndTime — both align to 45-min grid
+        var start = TimeSpan.FromHours(9).Add(TimeSpan.FromMinutes(45));  // 9:45
+        var end = TimeSpan.FromHours(10).Add(TimeSpan.FromMinutes(30));   // 10:30
+        var request = CreateValidRequest(start: start, end: end);
+
+        bookingRepo.Setup(r => r.FindOverlappingAsync(RoomId, FutureDate, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Booking>());
+
+        // Act
+        var result = await svc.CreateBookingAsync(request);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(start, result.StartTime);
+        Assert.Equal(end, result.EndTime);
+        bookingRepo.Verify(r => r.AddAsync(It.IsAny<Booking>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateBooking_Step45_RejectsTimeOffGrid()
+    {
+        // Arrange: TimeStep=45, time 10:15-11:00 → not on 45-min grid
+        var customOpts = new BookingOptions
+        {
+            WorkingHoursStart = TimeSpan.FromHours(9),
+            WorkingHoursEnd = TimeSpan.FromHours(18),
+            BookingTimeStepMinutes = 45
+        };
+
+        var (svc, roomRepo, _, userCtx, _) = CreateService(bookingOpts: customOpts);
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        roomRepo.Setup(r => r.ExistsAsync(RoomId, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        // 10:15 — 15 minutes % 45 ≠ 0, should fail
+        var request = CreateValidRequest(
+            start: TimeSpan.FromHours(10).Add(TimeSpan.FromMinutes(15)),
+            end: TimeSpan.FromHours(11));
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => svc.CreateBookingAsync(request));
+        Assert.Contains("45", ex.Message);
+    }
+
+    [Fact]
+    public async Task CheckAvailability_Step45_AcceptsTimeWithNonZeroMinutes()
+    {
+        // Same as CreateBooking but for CheckAvailability
+        var customOpts = new BookingOptions
+        {
+            WorkingHoursStart = TimeSpan.FromHours(9),
+            WorkingHoursEnd = TimeSpan.FromHours(18),
+            BookingTimeStepMinutes = 45
+        };
+
+        var (svc, roomRepo, bookingRepo, _, _) = CreateService(bookingOpts: customOpts);
+
+        roomRepo.Setup(r => r.ExistsAsync(RoomId, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        var start = TimeSpan.FromHours(9).Add(TimeSpan.FromMinutes(45));  // 9:45
+        var end = TimeSpan.FromHours(10).Add(TimeSpan.FromMinutes(30));   // 10:30
+
+        bookingRepo.Setup(r => r.FindOverlappingAsync(RoomId, FutureDate, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Booking>());
+
+        // Act
+        var result = await svc.CheckAvailabilityAsync(RoomId, FutureDate, start, end);
+
+        // Assert
+        Assert.True(result.IsAvailable);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // REGRESSION: FIX-06 — Calendar date range validation
+    // ═══════════════════════════════════════════════════════════════════
+    // These tests SHOULD FAIL on current code:
+    //   GetCalendarBookingsAsync does not validate startDate > endDate.
+
+    [Fact]
+    public async Task GetCalendarBookings_StartDateAfterEndDate_ThrowsValidationException()
+    {
+        // Arrange
+        var (svc, _, _, userCtx, _) = CreateService();
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var endDate = DateOnly.FromDateTime(FutureDate);
+        var startDate = endDate.AddDays(1); // start after end
+
+        // Act & Assert
+        // Currently no validation → goes to repository. After fix → ValidationException.
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            svc.GetCalendarBookingsAsync(startDate, endDate));
+        Assert.Contains("start", ex.Message.ToLower());
+    }
+
+    [Fact]
+    public async Task GetCalendarBookings_SingleDayRange_ReturnsBookings()
+    {
+        // Arrange
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var singleDate = DateOnly.FromDateTime(FutureDate);
+        var booking = CreateBookingEntity(userId: UserId);
+
+        bookingRepo.Setup(r => r.GetByDateRangeAsync(singleDate, singleDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Booking> { booking });
+
+        // Act
+        var result = await svc.GetCalendarBookingsAsync(singleDate, singleDate);
+
+        // Assert
+        Assert.Single(result);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // REGRESSION: Auth coverage gaps
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task GetMyBookings_Unauthenticated_ThrowsAccessDenied()
+    {
+        // Arrange
+        var (svc, _, _, userCtx, _) = CreateService();
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync((Guid?)null);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync((UserRole?)null);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<AccessDeniedException>(() => svc.GetMyBookingsAsync());
+        Assert.Contains("authenticated", ex.Message.ToLower());
+    }
+
+    [Fact]
+    public async Task GetCalendarBookings_Unauthenticated_ThrowsAccessDenied()
+    {
+        // Arrange
+        var (svc, _, _, userCtx, _) = CreateService();
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync((Guid?)null);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync((UserRole?)null);
+
+        var startDate = DateOnly.FromDateTime(FutureDate);
+        var endDate = DateOnly.FromDateTime(FutureDate);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<AccessDeniedException>(() =>
+            svc.GetCalendarBookingsAsync(startDate, endDate));
+        Assert.Contains("authenticated", ex.Message.ToLower());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // REGRESSION: Overlap exclusion and verify excludeBookingId
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task UpdateBooking_ExcludesSelfFromOverlap_VerifyExcludeBookingId()
+    {
+        // Arrange
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        var newStart = TimeSpan.FromHours(14);
+        var newEnd = TimeSpan.FromHours(15);
+        var request = CreateValidRequest(start: newStart, end: newEnd, title: "Updated");
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId);
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+        bookingRepo.Setup(r => r.FindOverlappingAsync(RoomId, FutureDate, newStart, newEnd, BookingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Booking>());
+
+        // Act
+        await svc.UpdateBookingAsync(BookingId, request);
+
+        // Assert — verify excludeBookingId IS passed as BookingId
+        bookingRepo.Verify(
+            r => r.FindOverlappingAsync(RoomId, FutureDate, newStart, newEnd, BookingId, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateBooking_DoesNotExcludeOtherConflictingBooking()
+    {
+        // Arrange: There is ANOTHER booking that conflicts (not self).
+        // Should throw BookingConflictException.
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        var newStart = TimeSpan.FromHours(14);
+        var newEnd = TimeSpan.FromHours(15);
+        var request = CreateValidRequest(start: newStart, end: newEnd);
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId,
+            start: TimeSpan.FromHours(10), end: TimeSpan.FromHours(11));
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        // Another user's booking that overlaps with the NEW time
+        var otherBooking = CreateBookingEntity(
+            bookingId: Guid.NewGuid(), userId: OtherUserId,
+            start: newStart, end: newEnd);
+        bookingRepo.Setup(r => r.FindOverlappingAsync(RoomId, FutureDate, newStart, newEnd, BookingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Booking> { otherBooking });
+
+        // Act & Assert
+        await Assert.ThrowsAsync<BookingConflictException>(
+            () => svc.UpdateBookingAsync(BookingId, request));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // REGRESSION: Overlap in Update (full/partial/nested)
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task UpdateBooking_Overlap_FullOverlap_ThrowsConflict()
+    {
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        var request = CreateValidRequest(start: TimeSpan.FromHours(10), end: TimeSpan.FromHours(12));
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId,
+            start: TimeSpan.FromHours(9), end: TimeSpan.FromHours(10));
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        var other = CreateBookingEntity(bookingId: Guid.NewGuid(), userId: OtherUserId,
+            start: TimeSpan.FromHours(10), end: TimeSpan.FromHours(12));
+        bookingRepo.Setup(r => r.FindOverlappingAsync(RoomId, FutureDate,
+                TimeSpan.FromHours(10), TimeSpan.FromHours(12), BookingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Booking> { other });
+
+        await Assert.ThrowsAsync<BookingConflictException>(
+            () => svc.UpdateBookingAsync(BookingId, request));
+    }
+
+    [Fact]
+    public async Task UpdateBooking_Overlap_PartialOverlap_ThrowsConflict()
+    {
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        var request = CreateValidRequest(start: TimeSpan.FromHours(10), end: TimeSpan.FromHours(12));
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId,
+            start: TimeSpan.FromHours(9), end: TimeSpan.FromHours(10));
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        var other = CreateBookingEntity(bookingId: Guid.NewGuid(), userId: OtherUserId,
+            start: TimeSpan.FromHours(11), end: TimeSpan.FromHours(13));
+        bookingRepo.Setup(r => r.FindOverlappingAsync(RoomId, FutureDate,
+                TimeSpan.FromHours(10), TimeSpan.FromHours(12), BookingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Booking> { other });
+
+        await Assert.ThrowsAsync<BookingConflictException>(
+            () => svc.UpdateBookingAsync(BookingId, request));
+    }
+
+    [Fact]
+    public async Task UpdateBooking_Overlap_NestedOverlap_ThrowsConflict()
+    {
+        var (svc, _, bookingRepo, userCtx, _) = CreateService();
+        var request = CreateValidRequest(start: TimeSpan.FromHours(10), end: TimeSpan.FromHours(13));
+
+        userCtx.Setup(c => c.GetCurrentUserIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserId);
+        userCtx.Setup(c => c.GetCurrentUserRoleAsync(It.IsAny<CancellationToken>())).ReturnsAsync(UserRole.User);
+
+        var existing = CreateBookingEntity(bookingId: BookingId, userId: UserId,
+            start: TimeSpan.FromHours(9), end: TimeSpan.FromHours(10));
+        bookingRepo.Setup(r => r.GetByIdAsync(BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        var other = CreateBookingEntity(bookingId: Guid.NewGuid(), userId: OtherUserId,
+            start: TimeSpan.FromHours(11), end: TimeSpan.FromHours(12));
+        bookingRepo.Setup(r => r.FindOverlappingAsync(RoomId, FutureDate,
+                TimeSpan.FromHours(10), TimeSpan.FromHours(13), BookingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Booking> { other });
+
+        await Assert.ThrowsAsync<BookingConflictException>(
+            () => svc.UpdateBookingAsync(BookingId, request));
     }
 }
