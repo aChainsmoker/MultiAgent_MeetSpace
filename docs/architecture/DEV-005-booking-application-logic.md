@@ -265,22 +265,26 @@ public class BookingService
 #### 3.3.2. UpdateBookingAsync
 
 ```
-1. Получить текущего пользователя
+1. Получить текущего пользователя: currentUserContext (userId + роль)
 2. Загрузить существующую бронь: bookingRepository.GetByIdAsync(bookingId, ct)
    — если нет → NotFoundException("Booking not found")
 3. Проверить права:
    — если currentUser.Role != Manager && booking.UserId != currentUser.Id → AccessDeniedException
-4. Проверить существование комнаты (если комната изменилась)
-5. Построить BookingTimeRules, maxLength
-6. Валидация времени:
-   a. date >= today (аналогично созданию)
-   b. Обновить поля через сеттеры сущности: SetTitle, SetDescription, SetDate, SetTimeInterval
-7. Проверить доступность: bookingRepository.FindOverlappingAsync(roomId, date, startTime, endTime, excludeBookingId: bookingId, ct)
+4. ValidateNotInPast(normalizedDate, request.StartTime)
+5. Проверить существование комнаты (если request.RoomId отличается)
+   — если нет → NotFoundException("Room", request.RoomId)
+6. Проверить доступность: bookingRepository.FindOverlappingAsync(request.RoomId, date, startTime, endTime, excludeBookingId: bookingId, ct)
    — исключаем текущую бронь из проверки
    — если есть пересечения → BookingConflictException
-8. Сохранить: bookingRepository.UpdateAsync(booking, ct)
-9. Вернуть BookingDto
+7. Атомарно провалидировать все поля через временный new Booking(...) — при успехе отбросить
+   — если ArgumentException → ValidationException
+8. Применить изменения к existing (только после успешных проверок):
+   — SetTitle, SetDescription, SetDate, SetTimeInterval, SetRoomId (если смена)
+9. Сохранить: bookingRepository.UpdateAsync(existing, ct)
+10. Вернуть BookingDto
 ```
+
+**Обоснование порядка:** все проверки (права, прошлое время, комната, пересечение, валидность полей) выполняются до мутации `existing`. Это гарантирует, что при ошибке сущность не остаётся частично изменённой (требование тикета стр. 73). Временный `Booking` используется как атомарный валидатор Domain-инвариантов и немедленно отбрасывается — он не сохраняется и не подменяет `existing`.
 
 #### 3.3.3. DeleteBookingAsync
 
@@ -758,17 +762,54 @@ existing.Start < requested.End && requested.Start < existing.End
 
 ---
 
-## 10. Изменения Domain (не требуются)
+## 10. Изменения Domain
 
-Существующие Domain-сущности и правила полностью покрывают потребности DEV-005:
+### 10.1. `Booking.SetRoomId` (добавлен на этапе code review — FIX-01)
 
-- **Booking:** конструктор + сеттеры с `BookingTimeRules` и `maxLength` уже готовы
-- **Room:** существует, навигационное свойство `Bookings` есть
-- **User:** существует, навигационное свойство `Bookings` есть
-- **BookingTimeRules:** находится в Domain (а не Application, как планировалось) — это допустимо, класс не зависит от ASP.NET
-- **UserRole:** перечисление готово
+**Причина:** `UpdateBookingAsync` должен поддерживать смену комнаты. Исходная реализация проверяла существование новой комнаты, но не применяла `RoomId` из-за `private set`. Молчаливый игнор недопустим.
 
-**Изменения Domain не требуются.**
+**Добавлен метод:**
+
+```csharp
+// MeetSpace.Domain/Entities/Booking.cs
+public void SetRoomId(Guid roomId)
+{
+    RoomId = roomId;
+}
+```
+
+Инварианты не нарушаются: `RoomId` — обычный FK без дополнительной логики. EF-совместимость сохраняется (private-конструктор + backing field).
+
+### 10.2. `BookingTimeRules.Validate` (добавлен на этапе code review — FIX-05)
+
+**Причина:** `BookingService.ValidateTimeInterval` дублировал инварианты `Booking.SetTimeInterval`. Дополнительно: проверка шага через `.Minutes` вместо `.TotalMinutes` давала ложные отклонения для шагов, не делящих 60 (например, 45 минут).
+
+**Добавлен метод:**
+
+```csharp
+// MeetSpace.Domain/Rules/BookingTimeRules.cs
+public void Validate(TimeSpan startTime, TimeSpan endTime)
+{
+    if (endTime <= startTime)
+        throw new ArgumentException("End time must be later than start time.");
+    if (startTime < WorkingHoursStart)
+        throw new ArgumentException($"Start time must not be earlier than {WorkingHoursStart:hh\\:mm}.");
+    if (endTime > WorkingHoursEnd)
+        throw new ArgumentException($"End time must not be later than {WorkingHoursEnd:hh\\:mm}.");
+    if ((int)startTime.TotalMinutes % TimeStepMinutes != 0)
+        throw new ArgumentException($"Start time minutes must be a multiple of {TimeStepMinutes}.");
+    if ((int)endTime.TotalMinutes % TimeStepMinutes != 0)
+        throw new ArgumentException($"End time minutes must be a multiple of {TimeStepMinutes}.");
+}
+```
+
+**Изменения в `Booking.SetTimeInterval`:** 5 проверок заменены на вызов `rules.Validate(startTime, endTime);`
+
+**Изменения в `BookingService`:** метод `ValidateTimeInterval` удалён. `CheckAvailabilityAsync` использует `_timeRules.Validate(startTime, endTime)`.
+
+**Точка отсчёта шага:** `TotalMinutes` отсчитывается от 00:00 (полночь). Например, `TimeSpan.FromHours(1.5) = 01:30:00`, `TotalMinutes = 90`. Для шага 45 минут: `90 % 45 = 0` — валидно. Для шага 30 минут при `01:30`: `90 % 30 = 0` — валидно. Приведение к `(int)` отбрасывает доли миллисекунды для `TimeSpan` с секундами: `01:30:45` → `TotalMinutes = 90.75`, `(int)90.75 = 90`.
+
+**Не сужать допустимые настройки:** `BookingTimeStepMinutes=45` допустимо валидатором Options (0 < 45 ≤ 60) и должно корректно работать. Исправление `.Minutes` → `.TotalMinutes` это обеспечивает.
 
 ---
 
