@@ -4,6 +4,7 @@
     <Project Path="src/MeetSpace.Domain/MeetSpace.Domain.csproj" />
     <Project Path="src/MeetSpace.Application/MeetSpace.Application.csproj" />
     <Project Path="src/MeetSpace.Infrastructure/MeetSpace.Infrastructure.csproj" />
+    <Project Path="src/MeetSpace.DataAccess/MeetSpace.DataAccess.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/MeetSpace.Tests/MeetSpace.Tests.csproj" />
